@@ -18,7 +18,7 @@ function timeout(p, ms) { return Promise.race([p, new Promise((_, r) => setTimeo
 
 // ============ settings ============
 const DEFAULTS = {
-  names: true, riskColors: true, red: 5, orange: 20,
+  names: true, riskColors: true, red: 5, orange: 20, cluster: 150,
   title: 'Red de Fibra Óptica – Ubicación de traza',
   company: 'Tigo Uruguay',
   author: 'Pablo Miraldo – Mantenimiento de Fibra Óptica',
@@ -587,22 +587,25 @@ function analyzeRisks() {
             }
           }
         }
-        // merge samples into zones (within 30 m)
-        zonesF.sort((x, y) => y.cls - x.cls || x.d - y.d);
-        const merged = [];
-        for (const z of zonesF) {
-          const m = merged.find(m => meters(m.at, z.at) < 30);
-          if (m) { m.cross = m.cross || z.cross; m.inside = m.inside || z.inside; continue; }
-          merged.push(z);
-        }
-        risks.push(...merged);
+        risks.push(...zonesF);
       }
     });
   }
-  // global merge (cross-feature) & order
-  risks.sort((x, y) => y.cls - x.cls || x.d - y.d);
+  // agrupar: un solo punto por zona (radio configurable, 150 m por defecto)
+  const CL = Math.max(10, +S.cluster || 150);
+  risks.sort((x, y) => (y.cross - x.cross) || y.cls - x.cls || x.d - y.d);
   const fin = [];
-  for (const z of risks) { if (fin.some(m => m.layer === z.layer && meters(m.at, z.at) < 30)) continue; fin.push(z); }
+  for (const z of risks) {
+    const m = fin.find(m => m.layer === z.layer && meters(m.at, z.at) <= CL);
+    if (m) {
+      m.cross = m.cross || z.cross; m.inside = m.inside || z.inside; m.cls = Math.max(m.cls, z.cls); m.d = Math.min(m.d, z.d);
+      m.bb[0] = Math.min(m.bb[0], z.at[0]); m.bb[1] = Math.min(m.bb[1], z.at[1]); m.bb[2] = Math.max(m.bb[2], z.at[0]); m.bb[3] = Math.max(m.bb[3], z.at[1]);
+      if (z.obra && m.obras.indexOf(z.obra) < 0) m.obras.push(z.obra);
+      continue;
+    }
+    fin.push(Object.assign({}, z, { bb: [z.at[0], z.at[1], z.at[0], z.at[1]], obras: z.obra ? [z.obra] : [] }));
+  }
+  fin.sort((x, y) => y.cls - x.cls || (y.cross - x.cross) || x.d - y.d);
   risks = fin.slice(0, 300);
   risks.forEach((z, i) => z.num = i + 1);
   riskPieces = pieces;
@@ -636,13 +639,18 @@ function renderRisks() {
     const t = riskText(z); const col = z.cls === 2 ? '#e01e1e' : '#ff8c00';
     const d = document.createElement('div'); d.className = 'risk';
     d.innerHTML = `<div class="num" style="background:${col}">${z.num}</div>
-      <div class="info"><b>${esc(t.what)}</b><br><small>Tigo: ${esc(t.tigo)} · Obra: ${esc(z.layer.name)}${z.obra ? ' / ' + esc(z.obra) : ''}</small></div>
+      <div class="info"><b>${esc(t.what)}</b><br><small>Tigo: ${esc(t.tigo)} · Obra: ${esc(z.layer.name)}${z.obras.length ? ' / ' + esc(z.obras.slice(0, 2).join(', ')) : ''}</small></div>
       <div class="acts"><button class="btn small">Ver</button><button class="btn small primary">Imagen</button></div>`;
     const [bv, bi] = d.querySelectorAll('button');
-    bv.onclick = () => { map.setView([z.at[1], z.at[0]], 19); if (innerWidth < 760) $('#riskPanel').classList.add('hidden'); };
-    bi.onclick = () => { map.setView([z.at[1], z.at[0]], 19); $('#riskPanel').classList.add('hidden'); openExport(z); };
+    bv.onclick = () => { map.fitBounds(zoneBounds(z), { maxZoom: 19 }); if (innerWidth < 760) $('#riskPanel').classList.add('hidden'); };
+    bi.onclick = () => { map.fitBounds(zoneBounds(z), { maxZoom: 19 }); $('#riskPanel').classList.add('hidden'); openExport(z); };
     el.appendChild(d);
   }
+}
+function zoneBounds(z) { // zona de riesgo + margen para que se vean obra y traza (mínimo ~160 m)
+  const c = [(z.bb[0] + z.bb[2]) / 2, (z.bb[1] + z.bb[3]) / 2];
+  const hx = Math.max((z.bb[2] - z.bb[0]) / 2 + 0.0005, 0.0009), hy = Math.max((z.bb[3] - z.bb[1]) / 2 + 0.0004, 0.0007);
+  return L.latLngBounds([c[1] - hy, c[0] - hx], [c[1] + hy, c[0] + hx]);
 }
 function openRiskPanel() { closeSheets(); $('#riskPanel').classList.remove('hidden'); }
 $('#btnRisks').onclick = () => { const h = $('#riskPanel').classList.contains('hidden'); closeSheets(); if (h) openRiskPanel(); };
@@ -772,7 +780,11 @@ async function renderSheet() {
   const view = map.getSize();
   let W = Math.max(900, Math.min(view.x, 1600)), H = Math.max(600, Math.min(view.y, 1100));
   if (exportZone) { W = 1200; H = 800; }
-  const center = map.getCenter(); const z0 = map.getZoom();
+  let center = map.getCenter(), z0 = map.getZoom();
+  if (exportZone) { // encuadre automático de la zona en 1200x800
+    const zb = zoneBounds(exportZone); center = zb.getCenter();
+    for (z0 = 19; z0 > 13; z0--) { const a = map.options.crs.latLngToPoint(zb.getNorthWest(), z0), c2 = map.options.crs.latLngToPoint(zb.getSouthEast(), z0); if (c2.x - a.x <= W * 0.92 && c2.y - a.y <= H * 0.92) break; }
+  }
   const maxNative = Math.min(...BASES[baseKey].map(b => b.max));
   const zr = Math.min(z0 + 1, 20); const k = Math.pow(2, zr - z0); // render at higher zoom for sharpness
   const MW = W * k, MH = H * k;
@@ -807,8 +819,9 @@ async function renderSheet() {
   for (const l of ordered) {
     const pts = [];
     eachNode(l.tree, (node, eff) => {
-      if (!eff) return;
       for (const f of node.features) {
+        const force = exportZone && (l === exportZone.layer || (l.isBase && f.t === 'L'));
+        if (!eff && !force) continue;
         const st = featStyle(f, l);
         if (f.t === 'P') { if (inView(f.c)) pts.push([f, st]); continue; }
         if (!bbOk(f)) continue;
@@ -922,17 +935,18 @@ $('#btnPanel').onclick = () => { const p = $('#panel'); p.classList.toggle('clos
 if (innerWidth < 760) closePanelMobile();
 $('#btnSettings').onclick = () => {
   const h = $('#settingsPanel').classList.contains('hidden'); closeSheets(); if (!h) return;
-  $('#setNames').checked = S.names; $('#setRiskColors').checked = S.riskColors; $('#setRed').value = S.red; $('#setOrange').value = S.orange;
+  $('#setNames').checked = S.names; $('#setCluster').value = S.cluster; $('#setRiskColors').checked = S.riskColors; $('#setRed').value = S.red; $('#setOrange').value = S.orange;
   $('#setTitle').value = S.title; $('#setCompany').value = S.company; $('#setAuthor').value = S.author; $('#setContact').value = S.contact; $('#setNote').value = S.note;
   $('#settingsPanel').classList.remove('hidden');
 };
 $('#settingsPanel').addEventListener('change', () => {
-  const before = [S.red, S.orange].join();
+  const before = [S.red, S.orange, S.cluster].join();
+  S.cluster = Math.max(10, +$('#setCluster').value || 150);
   S.names = $('#setNames').checked; S.riskColors = $('#setRiskColors').checked;
   S.red = Math.max(1, +$('#setRed').value || 5); S.orange = Math.max(S.red, +$('#setOrange').value || 20);
   S.title = $('#setTitle').value; S.company = $('#setCompany').value; S.author = $('#setAuthor').value; S.contact = $('#setContact').value; S.note = $('#setNote').value;
   saveS(); updateLabels();
-  if (before !== [S.red, S.orange].join()) analyzeRisks(); else { drawRiskOverlay(); renderRisks(); }
+  if (before !== [S.red, S.orange, S.cluster].join()) analyzeRisks(); else { drawRiskOverlay(); renderRisks(); }
 });
 
 // ============ file inputs ============
