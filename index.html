@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Mapa de Trazas – Fibra Tigo</title>
+<meta name="theme-color" content="#0b2a4a">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="topbar">
+  <button id="btnPanel" class="ico" title="Capas">☰</button>
+  <div class="brand">Mapa de Trazas <span>FO Tigo</span></div>
+  <form id="searchForm" autocomplete="off">
+    <input id="searchInput" type="search" placeholder="Buscar dirección, esquina o coordenadas…">
+    <div id="searchResults" class="hidden"></div>
+  </form>
+  <button id="btnSettings" class="ico" title="Configuración">⚙</button>
+</header>
+
+<aside id="panel">
+  <div class="panel-head">
+    <b>Capas</b>
+    <label class="btn small primary">+ Cargar KMZ / KML
+      <input id="fileInput" type="file" accept=".kmz,.kml" multiple hidden>
+    </label>
+  </div>
+  <div id="baseHint" class="hint hidden">
+    Todavía no cargaste la base Tigo. Tocá <b>“Cargar base Tigo”</b> y elegí <b>Red_Tigo_3en1.kmz</b>. Se guarda en este aparato y queda fija.
+    <label class="btn small primary block">Cargar base Tigo
+      <input id="baseInput" type="file" accept=".kmz,.kml" hidden>
+    </label>
+  </div>
+  <div id="layerTree"></div>
+</aside>
+
+<main id="map"></main>
+
+<div id="mapButtons">
+  <div class="seg" id="baseSwitch">
+    <button data-base="calles" class="on">Calles</button>
+    <button data-base="claro">Claro</button>
+    <button data-base="sat">Satélite</button>
+  </div>
+  <button id="btnGps" class="fab" title="Mi ubicación">◎</button>
+</div>
+
+<div id="bottomBar">
+  <button id="btnDraw" class="btn">✎ Dibujar</button>
+  <button id="btnRisks" class="btn warn">⚠ Riesgos <span id="riskCount">0</span></button>
+  <button id="btnExport" class="btn primary">⬇ Descargar imagen</button>
+</div>
+
+<div id="drawBar" class="hidden">
+  <button data-tool="point">📍 Punto</button>
+  <button data-tool="text">T Texto</button>
+  <button data-tool="line">／ Línea</button>
+  <button data-tool="arrow">➜ Flecha</button>
+  <button data-tool="circle">◯ Círculo</button>
+  <button data-tool="rect">▭ Cuadrado</button>
+  <button data-tool="free">〰 Mano alzada</button>
+  <button data-tool="erase">⌫ Borrar</button>
+  <input id="drawColor" type="color" value="#e00000" title="Color">
+  <button id="btnFinish" class="hidden">✔ Terminar</button>
+  <button id="btnClearAll">🗑 Todo</button>
+  <button id="btnDrawClose">✕</button>
+</div>
+<div id="toolHint" class="hidden"></div>
+
+<section id="riskPanel" class="sheet hidden">
+  <div class="sheet-head"><b>Puntos de riesgo</b><button class="ico" data-close="riskPanel">✕</button></div>
+  <div class="legend-mini"><span class="dot red"></span> menos de <b class="rRed"></b> m o cruce &nbsp; <span class="dot orange"></span> hasta <b class="rOr"></b> m</div>
+  <div id="riskList"></div>
+</section>
+
+<section id="settingsPanel" class="sheet hidden">
+  <div class="sheet-head"><b>Configuración</b><button class="ico" data-close="settingsPanel">✕</button></div>
+  <div class="form">
+    <h4>Mapa</h4>
+    <label class="chk"><input type="checkbox" id="setNames"> Mostrar nombres de cámaras y sitios (con zoom cerca)</label>
+    <h4>Riesgos</h4>
+    <label class="chk"><input type="checkbox" id="setRiskColors"> Pintar riesgos en rojo / naranja</label>
+    <div class="row"><label>Rojo (riesgo seguro) hasta <input type="number" id="setRed" min="1" max="50"> m</label></div>
+    <div class="row"><label>Naranja (revisar) hasta <input type="number" id="setOrange" min="2" max="100"> m</label></div>
+    <h4>Lámina para mail</h4>
+    <label>Título <input type="text" id="setTitle"></label>
+    <label>Empresa / Red <input type="text" id="setCompany"></label>
+    <label>Elaborado por <input type="text" id="setAuthor"></label>
+    <label>Contacto <input type="text" id="setContact"></label>
+    <label>Aviso al pie <textarea id="setNote" rows="2"></textarea></label>
+    <h4>Base Tigo</h4>
+    <label class="btn small">Reemplazar base Tigo
+      <input id="baseReplace" type="file" accept=".kmz,.kml" hidden>
+    </label>
+  </div>
+</section>
+
+<section id="exportPanel" class="sheet hidden">
+  <div class="sheet-head"><b>Descargar imagen</b><button class="ico" data-close="exportPanel">✕</button></div>
+  <div class="form">
+    <label>Obra / Solicitud (aparece en la lámina) <input type="text" id="expObra" placeholder="Ej: UTE – Solicitud 12345"></label>
+    <label>Destinatario (opcional) <input type="text" id="expTo" placeholder="Ej: Constructora XX"></label>
+    <label class="chk"><input type="checkbox" id="expAddr" checked> Poner la dirección de la zona</label>
+    <button id="expGo" class="btn primary block">Generar imagen de lo que se ve en pantalla</button>
+    <div id="expStatus" class="hint hidden"></div>
+    <img id="expPreview" class="hidden" alt="">
+    <div id="expActions" class="row hidden">
+      <a id="expDownload" class="btn primary" download>⬇ Descargar</a>
+      <button id="expShare" class="btn">↗ Compartir</button>
+    </div>
+  </div>
+</section>
+
+<div id="loading" class="hidden"><div class="spinner"></div><div id="loadingText">Cargando…</div></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
